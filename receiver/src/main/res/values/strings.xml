@@ -1,0 +1,3 @@
+<resources>
+    <string name="accessibility_description">允许已配对的轻控主控执行点击、滑动与焦点导航。仅在你启动遥控服务并连接后接收操作；可随时停止服务或关闭此权限。</string>
+</resources>

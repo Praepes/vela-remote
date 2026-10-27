@@ -1,0 +1,1 @@
+-keep class dev.controlpad.worker.** { *; }

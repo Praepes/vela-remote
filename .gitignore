@@ -1,0 +1,17 @@
+.gradle/
+.kotlin/
+**/build/
+local.properties
+.local/
+*.iml
+.idea/
+captures/
+__pycache__/
+*.py[cod]
+
+# 本地文档、测试记录和分发文件
+/docs/
+/dist/
+*.[mM][dD]
+!/README.md
+*.log
