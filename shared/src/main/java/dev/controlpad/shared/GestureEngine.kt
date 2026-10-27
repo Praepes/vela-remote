@@ -11,14 +11,15 @@ class GestureEngine(
 ) {
     enum class State { IDLE, ONE, MOVE, SECOND, DRAG, TWO, SCROLL, PINCH, WAIT_UP }
     var state = State.IDLE; private set
-    var speed = 1f; var acceleration = 0.25f; var scrollSpeed = 1f; var naturalScroll = true
+    var speed = 1f; var acceleration = 0f; var scrollSpeed = 1f; var naturalScroll = true
     private var gesture = 0L; private var downTime = 0L; private var lastTap = -10000L
     private var start = Finger(0,0f,0f); private var prev = start
+    private var previousTime = 0L
     private var centerX = 0f; private var centerY = 0f; private var startCenterY = 0f
     private var span = 1f; private var startSpan = 1f; private var firstId = -1
     private fun send(kind: Int, x: Float = 0f, y: Float = 0f) = emit(Packet(kind, gesture=gesture, x=x, y=y))
     fun down(time: Long, finger: Finger) {
-        cancel(); gesture++; downTime=time; start=finger; prev=finger; firstId=finger.id
+        cancel(); gesture++; downTime=time; start=finger; prev=finger; previousTime=time; firstId=finger.id
         state=if(time-lastTap in 0..doubleTimeout) State.SECOND else State.ONE
     }
     fun longPress(time: Long) {
@@ -54,16 +55,21 @@ class GestureEngine(
         }
         val f=fingers.firstOrNull { it.id==firstId } ?: return
         val distance=hypot(f.x-start.x,f.y-start.y)
-        if((state==State.ONE || state==State.SECOND) && distance > slop) {
+        val beginsMotion=(state==State.ONE || state==State.SECOND) && distance > slop
+        if(beginsMotion) {
             if(state==State.SECOND) { state=State.DRAG; send(Kind.DRAG_BEGIN); lastTap=-10000 }
             else state=State.MOVE
         }
         if(state==State.MOVE || state==State.DRAG) {
-            val dx=f.x-prev.x; val dy=f.y-prev.y
-            val gain=speed*(1f+acceleration*(hypot(dx,dy)/12f).coerceAtMost(2f))
+            val sampleX=f.x-prev.x; val sampleY=f.y-prev.y
+            val dx=if(beginsMotion) f.x-start.x else sampleX
+            val dy=if(beginsMotion) f.y-start.y else sampleY
+            // Velocity in logical pixels/ms gives the same gain at different touch report rates.
+            val velocity=hypot(sampleX,sampleY)/(time-previousTime).coerceAtLeast(1)
+            val gain=speed*(1f+acceleration*(velocity/0.75f).coerceAtMost(2f))
             send(if(state==State.DRAG) Kind.DRAG_MOVE else Kind.MOVE, dx*gain,dy*gain)
         }
-        prev=f
+        prev=f; previousTime=time
     }
     fun up(time: Long) {
         when(state) {

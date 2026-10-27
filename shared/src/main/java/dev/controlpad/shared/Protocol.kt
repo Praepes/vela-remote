@@ -92,7 +92,13 @@ object Wire {
         return decode(ByteArray(size).also { data.readFully(it) })
     }
     fun write(output: OutputStream, packet: Packet) {
-        val b = encode(packet); synchronized(output) { val d = DataOutputStream(output); d.writeInt(b.size); d.write(b); d.flush() }
+        val b = encode(packet)
+        synchronized(output) {
+            // Keep small control frames in one TLS record/socket write, including the length prefix.
+            if(b.size<=4096) output.write(ByteBuffer.allocate(4+b.size).putInt(b.size).put(b).array())
+            else { val d=DataOutputStream(output); d.writeInt(b.size); d.write(b) }
+            output.flush()
+        }
     }
 }
 

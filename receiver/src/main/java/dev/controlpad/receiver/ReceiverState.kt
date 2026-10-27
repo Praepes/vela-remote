@@ -8,6 +8,8 @@ import java.util.concurrent.CopyOnWriteArraySet
 
 object ReceiverState {
     @Volatile var service:ReceiverService?=null
+    @Volatile var connectable=false
+    @Volatile var needsOverlay=false
     @Volatile var status="尚未启动"
     @Volatile var root="等待授权"
     @Volatile var input="等待输入服务"

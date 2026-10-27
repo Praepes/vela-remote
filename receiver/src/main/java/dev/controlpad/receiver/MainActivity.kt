@@ -51,7 +51,7 @@ class MainActivity:AppCompatActivity() {
     }
     private fun startReceiver() {
         if(prefs.getString("input_backend","auto")=="accessibility" && RemoteAccessibilityService.instance==null) { Toast.makeText(this,"请先开启“轻控 · 无障碍遥控”",Toast.LENGTH_LONG).show(); startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)); return }
-        if(prefs.getString("input_backend","auto")=="accessibility" && !Settings.canDrawOverlays(this)) {
+        if((prefs.getString("input_backend","auto")=="accessibility" || ReceiverState.needsOverlay) && !Settings.canDrawOverlays(this)) {
             pendingStart=true; startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:$packageName"))); return
         }
         val intent=Intent(this,ReceiverService::class.java)
@@ -69,7 +69,17 @@ class MainActivity:AppCompatActivity() {
             (active ?: NetworkInterface.getNetworkInterfaces().toList().flatMap { it.inetAddresses.toList() }.firstOrNull { !it.isLoopbackAddress && it is java.net.Inet4Address })?.hostAddress ?: "未联网"
         } catch(_:Exception) { "未联网" }
         val fingerprint=ReceiverState.fingerprint
+        if(!ReceiverState.connectable || address=="未联网" || fingerprint.isEmpty()) {
+            pair.text=when {
+                ReceiverState.needsOverlay -> "请先授权兼容光标，再启动遥控服务。"
+                address=="未联网" -> "请先连接局域网，再进行配对。"
+                else -> "遥控服务就绪后显示配对信息。\n请先启动服务，并确认上方状态。"
+            }
+            qr.setImageDrawable(null); qr.visibility=View.GONE; renderedToken=""
+            return
+        }
         pair.text="配对码：${ReceiverState.code}\n地址：$address:${Kind.CONTROL_PORT}"
+        qr.visibility=View.VISIBLE
         val qrKey="$address:$fingerprint:${ReceiverState.qrToken}"
         if(fingerprint.isNotEmpty() && qrKey!=renderedToken) {
             renderedToken=qrKey

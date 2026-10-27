@@ -101,7 +101,8 @@ class MainActivity:AppCompatActivity() {
         val modes=ui.row().apply { background=ui.rounded(if(ui.dark) Color.parseColor("#17202E") else Color.parseColor("#E9EDF4"),18); setPadding(ui.dp(4),ui.dp(4),ui.dp(4),ui.dp(4)) }
         listOf("鼠标" to InputMode.MOUSE,"触摸" to InputMode.TOUCH,"方向键" to InputMode.DPAD).forEach { (label,mode)->val selected=currentMode()==mode; modes.addView(ui.button(label) { switchMode(mode) }.apply {
             isSelected=selected; setTextColor(if(selected) ui.ink else ui.muted); if(!selected) setBackgroundColor(Color.TRANSPARENT)
-            isEnabled=when(mode) { InputMode.TOUCH->!client.isBluetooth; InputMode.MOUSE->client.capabilities and Capability.ACCESSIBILITY==0; else->true }; alpha=if(isEnabled) 1f else 0.4f
+            isEnabled=when(mode) { InputMode.TOUCH->!client.isBluetooth; InputMode.MOUSE->!client.connected || client.capabilities and Capability.NATIVE_MOUSE!=0; else->true }; alpha=if(isEnabled) 1f else 0.4f
+            if(mode==InputMode.MOUSE && !isEnabled) contentDescription="鼠标模式不可用：受控端未能创建系统鼠标，请使用触摸模式"
         },LinearLayout.LayoutParams(0,ui.dp(48),1f)) }
         return modes
     }
@@ -116,7 +117,7 @@ class MainActivity:AppCompatActivity() {
     }.apply {
         touchGestures=touchMode || !client.nativeMouse
         remoteEnabled=client.connected && client.displayVersion>0; haptics=prefs.getBoolean("haptics",true)
-        engine.speed=prefs.getFloat("speed",1.5f); engine.acceleration=prefs.getFloat("acceleration",0.25f); engine.scrollSpeed=prefs.getFloat("scroll",2f); engine.naturalScroll=prefs.getBoolean("natural",true)
+        engine.speed=prefs.getFloat("speed",1.5f); engine.acceleration=prefs.getFloat("acceleration",0f); engine.scrollSpeed=prefs.getFloat("scroll",2f); engine.naturalScroll=prefs.getBoolean("natural",true)
     }
     private fun videoPanel():FrameLayout {
         val holder=FrameLayout(this).apply { background=ui.rounded(android.graphics.Color.BLACK,18); clipToOutline=true }
@@ -327,7 +328,7 @@ class MainActivity:AppCompatActivity() {
             }
             body.addView(seek)
         }
-        slider("光标速度","speed",1.5f,300,100f); slider("光标加速度","acceleration",0.25f,100,100f); slider("滚动速度","scroll",2f,400,100f)
+        slider("光标速度","speed",1.5f,300,100f); slider("光标加速度","acceleration",0f,100,100f); slider("滚动速度","scroll",2f,400,100f)
         body.addView(ui.button("清除主控保存的配对") { client.forget(); toast("已清除本机保存的设备") })
         val scroll=ScrollView(this).apply { addView(body) }
         com.google.android.material.dialog.MaterialAlertDialogBuilder(this).setBackground(ui.rounded(ui.surface,24)).setTitle("遥控器设置").setView(scroll).setPositiveButton("完成") { _,_->cancelInputs(); if(preview) stopVideo(); AppCompatDelegate.setDefaultNightMode(if(prefs.getBoolean("dark",false)) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO); buildUi() }.show()

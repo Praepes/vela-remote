@@ -15,7 +15,7 @@ class Injector(private var width:Int,private var height:Int,private val send:(Pa
     private var mode=0; private var downTime=0L; private var radius=60f
     private var touchX=x; private var touchY=y; private var gesture=0L
     private val keys=mutableMapOf<Int,Long>()
-    private var uhid:UhidMouse?=null
+    private var mouseDevice:AutoCloseable?=null
     private var mouse:HidMouse?=null
     private var inputMode=InputMode.MOUSE
     var nativeReason=""; private set
@@ -24,10 +24,13 @@ class Injector(private var width:Int,private var height:Int,private val send:(Pa
     init { enableMouse() }
     private fun enableMouse() {
         if(mouse!=null) return
-        try { val device=UhidMouse(); uhid=device; mouse=HidMouse(device::report); nativeSupported=true; nativeReason="Root · 系统 HID 鼠标" }
-        catch(e:Throwable) { nativeSupported=false; nativeReason="Root · 触摸兼容（${e.cause?.message ?: e.message}）" }
+        try { val device=UhidMouse(); mouseDevice=device; mouse=HidMouse(device::report); nativeSupported=true; nativeReason="Root · 系统 HID 鼠标" }
+        catch(uhidError:Throwable) {
+            try { val device=UinputMouse(); mouseDevice=device; mouse=HidMouse(device::report); nativeSupported=true; nativeReason="Root · 系统鼠标（uinput 兼容）" }
+            catch(e:Throwable) { nativeSupported=false; nativeReason="Root · 触摸兼容（UHID：${uhidError.cause?.message ?: uhidError.message}；uinput：${e.cause?.message ?: e.message}）" }
+        }
     }
-    private fun disableMouse() { try { mouse?.cancel() } catch(_:Exception) {}; mouse=null; uhid?.close(); uhid=null }
+    private fun disableMouse() { try { mouse?.cancel() } catch(_:Exception) {}; mouse=null; mouseDevice?.close(); mouseDevice=null }
     private fun capabilities()=send(Packet(Kind.CAPABILITIES,code=Capability.TOUCH or Capability.PREVIEW or (if(nativeSupported) Capability.NATIVE_MOUSE else 0),flag=nativeMouse,text=when(inputMode) { InputMode.TOUCH->"Root · 触摸手势"; InputMode.DPAD->"Root · 方向导航"; else->nativeReason }))
     private fun injectEvent(e:android.view.InputEvent) {
         val ok=inject.invoke(manager,e,0) as Boolean

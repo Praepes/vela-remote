@@ -3,11 +3,26 @@ package dev.controlpad.receiver
 import android.content.Context
 import android.graphics.*
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.view.*
 
 class CursorOverlay(private val context:Context) {
+    private val idleTimeoutMs=30_000L
+    private val handler=Handler(Looper.getMainLooper())
+    private var lastActivity=0L
+    private var hideScheduled=false
     private val wm=context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private var added=false
+    internal val isVisible get()=added
+    private val idleHide=object:Runnable {
+        override fun run() {
+            hideScheduled=false
+            val remaining=idleTimeoutMs-(SystemClock.uptimeMillis()-lastActivity)
+            if(added && remaining>0) scheduleHide(remaining) else hide()
+        }
+    }
     private val view=object:View(context) {
         val paint=Paint(Paint.ANTI_ALIAS_FLAG)
         override fun onDraw(c:Canvas) {
@@ -21,8 +36,18 @@ class CursorOverlay(private val context:Context) {
         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
         PixelFormat.TRANSLUCENT).apply { gravity=Gravity.TOP or Gravity.LEFT }
     fun show(x:Float,y:Float) {
+        val remaining=idleTimeoutMs-(SystemClock.uptimeMillis()-lastActivity)
+        if(remaining<=0) { hide(); return }
+        val changed=params.x!=x.toInt() || params.y!=y.toInt()
         params.x=x.toInt(); params.y=y.toInt()
-        if(!added) { wm.addView(view,params); added=true } else wm.updateViewLayout(view,params)
+        if(!added) { wm.addView(view,params); added=true } else if(changed) wm.updateViewLayout(view,params)
+        scheduleHide(remaining)
     }
-    fun hide() { if(added) { wm.removeView(view); added=false } }
+    /** Called for user input, never for heartbeats or cursor/status feedback. */
+    fun activity() { lastActivity=SystemClock.uptimeMillis() }
+    private fun scheduleHide(delay:Long) { if(!hideScheduled) { hideScheduled=true; handler.postDelayed(idleHide,delay) } }
+    fun hide() {
+        handler.removeCallbacks(idleHide); hideScheduled=false
+        if(added) { wm.removeView(view); added=false }
+    }
 }

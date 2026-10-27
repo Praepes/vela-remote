@@ -10,7 +10,8 @@ import dev.controlpad.shared.*
 class TouchpadView(context:Context,private val ui:Ui,private val emit:(Packet)->Unit):View(context) {
     private val handler=Handler(Looper.getMainLooper())
     private val config=ViewConfiguration.get(context)
-    val engine=GestureEngine(config.scaledTouchSlop.toFloat(),ViewConfiguration.getLongPressTimeout().toLong(),ViewConfiguration.getDoubleTapTimeout().toLong(),ViewConfiguration.getLongPressTimeout().toLong()) { p->
+    private val density=resources.displayMetrics.density
+    val engine=GestureEngine((config.scaledTouchSlop/density).coerceAtMost(2f),ViewConfiguration.getLongPressTimeout().toLong(),ViewConfiguration.getDoubleTapTimeout().toLong(),ViewConfiguration.getLongPressTimeout().toLong()) { p->
         if(p.kind==Kind.TAP || p.kind==Kind.DRAG_BEGIN) if(haptics) performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
         emit(p)
     }
@@ -37,12 +38,20 @@ class TouchpadView(context:Context,private val ui:Ui,private val emit:(Packet)->
     }
     override fun onTouchEvent(e:MotionEvent):Boolean {
         if(!remoteEnabled) return true
-        val fingers=(0 until e.pointerCount).filter { !(e.actionMasked==MotionEvent.ACTION_POINTER_UP && it==e.actionIndex) }.map { Finger(e.getPointerId(it),e.getX(it),e.getY(it)) }
+        fun sample(history:Int=-1)=(0 until e.pointerCount).filter { !(e.actionMasked==MotionEvent.ACTION_POINTER_UP && it==e.actionIndex) }.map {
+            Finger(e.getPointerId(it),(if(history<0) e.getX(it) else e.getHistoricalX(it,history))/density,
+                (if(history<0) e.getY(it) else e.getHistoricalY(it,history))/density)
+        }
+        val fingers=sample()
         when(e.actionMasked) {
             MotionEvent.ACTION_DOWN -> { parent.requestDisallowInterceptTouchEvent(true); pressed=true; engine.down(e.eventTime,fingers[0]); handler.postDelayed(longPress,ViewConfiguration.getLongPressTimeout().toLong()) }
-            MotionEvent.ACTION_MOVE -> { engine.fingers(e.eventTime,fingers); if(engine.state !in listOf(GestureEngine.State.ONE,GestureEngine.State.SECOND)) handler.removeCallbacks(longPress) }
+            MotionEvent.ACTION_MOVE -> {
+                for(h in 0 until e.historySize) engine.fingers(e.getHistoricalEventTime(h),sample(h))
+                engine.fingers(e.eventTime,fingers)
+                if(engine.state !in listOf(GestureEngine.State.ONE,GestureEngine.State.SECOND)) handler.removeCallbacks(longPress)
+            }
             MotionEvent.ACTION_POINTER_DOWN,MotionEvent.ACTION_POINTER_UP -> { handler.removeCallbacks(longPress); engine.fingers(e.eventTime,fingers) }
-            MotionEvent.ACTION_UP -> { handler.removeCallbacks(longPress); engine.up(e.eventTime); pressed=false; parent.requestDisallowInterceptTouchEvent(false); performClick() }
+            MotionEvent.ACTION_UP -> { handler.removeCallbacks(longPress); engine.fingers(e.eventTime,fingers); engine.up(e.eventTime); pressed=false; parent.requestDisallowInterceptTouchEvent(false); performClick() }
             MotionEvent.ACTION_CANCEL -> cancel()
         }
         fingerX=e.x; fingerY=e.y; invalidate(); return true

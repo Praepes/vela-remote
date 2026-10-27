@@ -29,4 +29,22 @@ class GestureTest {
     }
     @Test fun interruptedDragCancelsAndDoesNotResume() { g.down(0,f(0f,0f)); g.longPress(500); g.cancel(); g.up(700); assertEquals(listOf(Kind.DRAG_BEGIN,Kind.CANCEL),out.map{it.kind}) }
     @Test fun reverseScrollChangesSign() { g.naturalScroll=false; g.down(0,f(0f,0f)); g.fingers(10,listOf(f(0f,0f),f(100f,0f,1))); g.fingers(20,listOf(f(0f,20f),f(100f,20f,1))); assertEquals(-20f,out.last().y,0.01f) }
+    @Test fun accelerationIsIndependentOfTouchReportRate() {
+        fun travel(step:Int):Float {
+            val packets=mutableListOf<Packet>()
+            val engine=GestureEngine(0f,500,300,500,packets::add).apply { acceleration=0.5f }
+            engine.down(0,f(0f,0f))
+            for(t in step..240 step step) engine.fingers(t.toLong(),listOf(f(t.toFloat(),0f)))
+            return packets.sumOf { it.x.toDouble() }.toFloat()
+        }
+        assertEquals(travel(4),travel(16),0.01f)
+    }
+    @Test fun defaultMovementIsLinearAtDifferentSpeeds() {
+        g.down(0,f(0f,0f)); g.fingers(10,listOf(f(20f,0f))); g.fingers(210,listOf(f(40f,0f)))
+        assertEquals(20f,out[0].x,0f); assertEquals(20f,out[1].x,0f)
+    }
+    @Test fun crossingTapSlopPreservesTheInitialMovement() {
+        g.down(0,f(0f,0f)); g.fingers(10,listOf(f(2f,0f))); g.fingers(20,listOf(f(5f,0f))); g.fingers(30,listOf(f(9f,0f)))
+        assertEquals(1,out.size); assertEquals(9f,out.single().x,0f)
+    }
 }

@@ -10,7 +10,8 @@ import kotlin.concurrent.thread
 /** 通过 CLASSPATH=<receiver.apk> app_process 启动，绝不监听 TCP。 */
 object RootMain {
     @JvmStatic fun main(args: Array<String>) {
-        if(args.size!=6 || android.os.Process.myUid()!=0) return
+        if(args.size!=7 || android.os.Process.myUid()!=0) return
+        System.setProperty("controlpad.nativeLibraryDir",args[6])
         Looper.prepareMainLooper()
         val server=LocalServerSocket(args[0]); val peer=server.accept(); server.close()
         if(peer.peerCredentials.uid!=args[5].toInt()) { peer.close(); return }

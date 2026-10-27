@@ -20,8 +20,9 @@ class RootBridge(private val context:Context,private val onPacket:(Packet)->Unit
         thread(name="root-start") {
             try {
                 val apk=context.applicationInfo.sourceDir
-                require(!apk.contains('\''))
-                val command="CLASSPATH='$apk' /system/bin/app_process / dev.controlpad.worker.RootMain $name $token $software $width $height ${android.os.Process.myUid()}"
+                val nativeDir=context.applicationInfo.nativeLibraryDir
+                require(!apk.contains('\'') && !nativeDir.contains('\''))
+                val command="CLASSPATH='$apk' /system/bin/app_process / dev.controlpad.worker.RootMain $name $token $software $width $height ${android.os.Process.myUid()} '$nativeDir'"
                 process=ProcessBuilder("su","-c",command).redirectErrorStream(true).start()
                 val errors=StringBuilder()
                 thread(name="root-log",isDaemon=true) { try { process?.inputStream?.bufferedReader()?.forEachLine { synchronized(errors) { if(errors.length<2048) errors.appendLine(it) } } } catch(_:Exception) {} }

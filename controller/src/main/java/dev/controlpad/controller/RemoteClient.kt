@@ -111,22 +111,35 @@ class RemoteClient(private val context:Context,private val notify:(Packet)->Unit
     private fun startWriter(socket:SSLSocket,generation:Int) {
         thread(name="controller-writer") {
             var sequence=0L
+            var nextMotionAt=0L
             try {
                 while(connected && epoch==generation) {
-                    val p=synchronized(lock) { while(queue.isEmpty() && connected && epoch==generation) lock.wait(500); if(queue.isEmpty()) null else queue.removeFirst() } ?: continue
+                    val p=synchronized(lock) {
+                        while(queue.isEmpty() && connected && epoch==generation) lock.wait(500)
+                        // Accumulate relative movement at most once per receiver display frame.
+                        // A following button/up/cancel packet flushes it immediately, preserving order.
+                        while(connected && epoch==generation && queue.size==1 && isMotion(queue.peekFirst())) {
+                            val remaining=nextMotionAt-SystemClock.uptimeMillis()
+                            if(remaining<=0) break
+                            lock.wait(remaining)
+                        }
+                        if(queue.isEmpty()) null else queue.removeFirst()
+                    } ?: continue
                     if(epoch!=generation) break
+                    if(isMotion(p)) nextMotionAt=SystemClock.uptimeMillis()+16
                     Wire.write(socket.outputStream,p.copy(sequence=++sequence))
                 }
             } catch(e:Exception) { lost(generation,e.message ?: "发送失败") }
         }
     }
+    private fun isMotion(packet:Packet?)=packet?.kind==Kind.MOVE || packet?.kind==Kind.DRAG_MOVE
     fun send(packet:Packet) {
         if(!connected) return
         bluetooth?.let { it.send(packet); return }
         val p=packet.copy(display=if(packet.display==0) displayVersion else packet.display)
         synchronized(lock) {
             val last=queue.peekLast()
-            if(p.kind==Kind.MOVE && last?.kind==Kind.MOVE && last.display==p.display && last.gesture==p.gesture) { queue.removeLast(); queue.addLast(p.copy(x=p.x+last.x,y=p.y+last.y)) }
+            if(isMotion(p) && last?.kind==p.kind && last.display==p.display && last.gesture==p.gesture) { queue.removeLast(); queue.addLast(p.copy(x=p.x+last.x,y=p.y+last.y)) }
             else if(queue.size<128) queue.addLast(p)
             else { thread { lost(epoch,"输入队列积压，已断开以释放按压") }; return }
             lock.notifyAll()

@@ -16,6 +16,16 @@ class ProtocolTest {
         val out=ByteArrayOutputStream(); Wire.write(out,Packet(Kind.TAP)); Wire.write(out,Packet(Kind.CANCEL))
         val input=ByteArrayInputStream(out.toByteArray()); assertEquals(Kind.TAP,Wire.read(input).kind); assertEquals(Kind.CANCEL,Wire.read(input).kind)
     }
+    @Test fun controlFrameIsWrittenAsOneTransportRecord() {
+        val records=mutableListOf<ByteArray>()
+        val output=object:OutputStream() {
+            override fun write(value:Int) { fail("控制帧不应逐字节写入传输层") }
+            override fun write(bytes:ByteArray,offset:Int,length:Int) { records.add(bytes.copyOfRange(offset,offset+length)) }
+        }
+        Wire.write(output,Packet(Kind.MOVE,x=1.25f,y=-2f))
+        assertEquals("帧长度和数据拆开写入会产生额外 TLS 记录",1,records.size)
+        assertEquals(1.25f,Wire.read(ByteArrayInputStream(records.single())).x,0f)
+    }
     @Test fun unknownFieldIsSkipped() { assertEquals(Kind.TAP,Wire.decode(byteArrayOf(8,11,96,1)).kind) }
     @Test fun malformedPacketsRejected() {
         listOf(byteArrayOf(8,-128),byteArrayOf(74,127,0),byteArrayOf(13,0,0,0,0),byteArrayOf(0)).forEach { b->try { Wire.decode(b); fail("应拒绝非法消息") } catch(_:Exception) {} }

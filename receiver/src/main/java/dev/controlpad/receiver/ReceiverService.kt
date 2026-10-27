@@ -29,9 +29,11 @@ class ReceiverService:Service() {
         if(!::overlay.isInitialized) return
         if(client!=null && cursorVisible && !nativeMouse && Settings.canDrawOverlays(this)) overlay.show(cursorX,cursorY) else overlay.hide()
     }
+    private fun cursorActivity() { if(::overlay.isInitialized && running && client!=null) { overlay.activity(); updateCursor() } }
     private lateinit var contextTls:SSLContext
     private val prefs by lazy { getSharedPreferences("receiver",MODE_PRIVATE) }
     @Volatile private var running=false
+    @Volatile private var listening=false
     @Volatile private var client:SSLSocket?=null
     @Volatile private var media:SSLSocket?=null
     @Volatile private var session=""
@@ -56,7 +58,7 @@ class ReceiverService:Service() {
     private var projectionGrant:Pair<Int,Intent>?=null
     override fun onBind(intent:Intent?)=null
     override fun onCreate() {
-        super.onCreate(); ReceiverState.service=this; ReceiverState.status="正在启动"; ReceiverState.root="等待授权"; ReceiverState.input="等待输入服务"; ReceiverState.pairing()
+        super.onCreate(); ReceiverState.service=this; ReceiverState.connectable=false; ReceiverState.needsOverlay=false; ReceiverState.status="正在启动"; ReceiverState.root="等待授权"; ReceiverState.input="等待输入服务"; ReceiverState.pairing()
         val notifications=getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         if(Build.VERSION.SDK_INT>=26) notifications.createNotificationChannel(NotificationChannel("remote","遥控服务",NotificationManager.IMPORTANCE_LOW))
         val open=PendingIntent.getActivity(this,0,Intent(this,MainActivity::class.java),PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
@@ -82,14 +84,14 @@ class ReceiverService:Service() {
                 synchronized(this) {
                     if(!running) return@thread
                     contextTls=identity.first; ReceiverState.fingerprint=identity.second
-                    listen(false); listen(true); registerDiscovery()
+                    listen(false); listen(true); listening=true
                     timer.scheduleAtFixedRate({
                         if(client!=null && SystemClock.uptimeMillis()-lastPing>3000) disconnect()
                         val writing=writingSince.get()
                         if(writing!=0L && SystemClock.uptimeMillis()-writing>1500) disconnect()
                         handler.post { updateDisplay() }
                     },1,1,TimeUnit.SECONDS)
-                    ReceiverState.status=if(inputReady()) "服务正常，等待连接" else "等待输入服务就绪"; ReceiverState.changed()
+                    updateAvailability()
                 }
             } catch(e:Exception) { handler.post { fail("网络启动失败：${e.message}") } }
         }
@@ -98,7 +100,18 @@ class ReceiverService:Service() {
         if(intent?.action=="STOP") { stopSelf(); return START_NOT_STICKY }
         return START_STICKY
     }
-    @Synchronized private fun fail(message:String) { running=false; ReceiverState.status=message; ReceiverState.root="未就绪"; ReceiverState.changed(); stopSelf() }
+    @Synchronized private fun fail(message:String) { running=false; ReceiverState.connectable=false; ReceiverState.status=message; ReceiverState.root="未就绪"; ReceiverState.changed(); stopSelf() }
+    @Synchronized private fun updateAvailability() {
+        val ready=running && listening && inputReady() && (nativeMouse || Settings.canDrawOverlays(this))
+        ReceiverState.connectable=ready
+        if(!running) return
+        ReceiverState.status=if(ready) "服务正常，等待连接" else "等待输入服务就绪"
+        if(ready && nsdListener==null) try { registerDiscovery() } catch(e:Exception) {
+            ReceiverState.status="手动连接可用，自动发现注册失败：${e.message}"
+            android.util.Log.w("ControlPad","自动发现注册失败",e)
+        }
+        ReceiverState.changed()
+    }
     @Suppress("DEPRECATION") private fun updateDisplay() {
         val display=(getSystemService(WINDOW_SERVICE) as WindowManager).defaultDisplay
         val point=Point(); display.getRealSize(point)
@@ -114,7 +127,7 @@ class ReceiverService:Service() {
     private fun startAccessibility():Boolean {
         val service=RemoteAccessibilityService.instance
         if(service==null) { fail("请在系统设置中开启“轻控 · 无障碍遥控”，然后启动服务"); return false }
-        if(!Settings.canDrawOverlays(this)) { fail("无障碍兼容模式需要兼容光标权限，请先授权悬浮窗"); return false }
+        if(!Settings.canDrawOverlays(this)) { ReceiverState.needsOverlay=true; fail("无障碍兼容模式需要兼容光标权限，请先授权悬浮窗"); return false }
         nativeMouse=false; nativeCapable=false; accessibility=AccessibilityInput(service,::onRootPacket)
         ReceiverState.root="未使用（无障碍模式）"
         onRootPacket(Packet(Kind.AUTH_OK,code=Capability.ACCESSIBILITY,text=if(Build.VERSION.SDK_INT>=26) "无障碍 · 连续触摸手势" else "无障碍 · Android 7 手势抬手后执行"))
@@ -148,8 +161,8 @@ class ReceiverService:Service() {
                 prefs.edit().putBoolean("initialized",true).apply()
                 nativeMouse=p.flag; nativeCapable=p.code and Capability.NATIVE_MOUSE!=0; ReceiverState.input=p.text
                 if(!usingAccessibility) ReceiverState.root="已授权 · UID 0"
-                if(!nativeMouse && !Settings.canDrawOverlays(this)) { handler.post { fail("系统鼠标不可用，需要授权兼容光标：${p.text}") }; return }
-                ReceiverState.status="服务正常，等待连接"
+                if(!nativeMouse && !Settings.canDrawOverlays(this)) { ReceiverState.needsOverlay=true; handler.post { fail("系统鼠标不可用，请点击“授权兼容光标”后重新启动服务：${p.text}") }; return }
+                updateAvailability()
                 sendRoot(displayPacket()); handler.post { updateCursor() }; ReceiverState.changed()
             }
             Kind.CAPABILITIES -> { nativeMouse=p.flag; nativeCapable=p.code and Capability.NATIVE_MOUSE!=0; ReceiverState.input=p.text; handler.post {
@@ -239,7 +252,7 @@ class ReceiverService:Service() {
                 Wire.write(socket.outputStream,displayPacket()); Wire.write(socket.outputStream,capabilityPacket()); startWriter(socket); ReceiverState.client="已连接：${socket.inetAddress.hostAddress}"; ReceiverState.status="服务正常 · 正在受控"; ReceiverState.changed()
             }
             socket.soTimeout=3500
-            handler.post { cursorVisible=true; updateCursor() }
+            handler.post { cursorVisible=true; cursorActivity() }
             while(running && client===socket) {
                 val packet=Wire.read(socket.inputStream)
                 require(packet.sequence>lastSequence) { "输入序号过期" }; lastSequence=packet.sequence
@@ -247,8 +260,8 @@ class ReceiverService:Service() {
                 when(packet.kind) {
                     Kind.PING -> sendClient(Packet(Kind.PONG,time=packet.time))
                     Kind.PREVIEW -> if(packet.flag) { require(media!=null) { "视频连接尚未就绪" }; startPreview() } else stopPreview()
-                    Kind.MODE -> { cursorVisible=packet.flag; sendRoot(packet); handler.post { updateCursor() } }
-                    Kind.MOVE,Kind.TAP,Kind.DRAG_BEGIN,Kind.DRAG_MOVE,Kind.END,Kind.CANCEL,Kind.SCROLL_BEGIN,Kind.SCROLL,Kind.PINCH_BEGIN,Kind.PINCH,Kind.KEY,Kind.CENTER -> sendRoot(packet)
+                    Kind.MODE -> { cursorVisible=packet.flag; sendRoot(packet); handler.post { cursorActivity() } }
+                    Kind.MOVE,Kind.TAP,Kind.DRAG_BEGIN,Kind.DRAG_MOVE,Kind.END,Kind.CANCEL,Kind.SCROLL_BEGIN,Kind.SCROLL,Kind.PINCH_BEGIN,Kind.PINCH,Kind.KEY,Kind.CENTER -> { handler.post { cursorActivity() }; sendRoot(packet) }
                     else -> throw IllegalArgumentException("不支持的控制消息")
                 }
             }
@@ -316,7 +329,7 @@ class ReceiverService:Service() {
         nsd.registerService(NsdServiceInfo().apply { serviceName="轻控-${Build.MODEL}"; serviceType=Kind.SERVICE_TYPE; port=Kind.CONTROL_PORT; setAttribute("version","1") },NsdManager.PROTOCOL_DNS_SD,listener)
     }
     @Synchronized override fun onDestroy() {
-        running=false; disconnect(); timer.shutdownNow()
+        running=false; listening=false; ReceiverState.connectable=false; disconnect(); timer.shutdownNow()
         if(::root.isInitialized) root.close()
         accessibility?.close(); accessibility=null
         try { controlServer?.close() } catch(_:Exception) {}; try { mediaServer?.close() } catch(_:Exception) {}
